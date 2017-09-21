@@ -5,6 +5,7 @@ mode=-regtest
 denomination=0.01
 denoandfee=0.0101
 
+
 for (( i=1; i <= $loop; ++i ))
 do
     address=$(bitcoin-cli $mode getnewaddress)
@@ -19,9 +20,10 @@ do
 
 	privKey2=$(bitcoin-cli $mode dumpprivkey $address2)
 
+	# ./user $hexPrevTx $privKey $privKey2
 	craftTx=$(./user $hexPrevTx $privKey $privKey2)
 
-	# echo $craftTx
+	echo $craftTx
 
 	t=$(bitcoin-cli $mode signrawtransaction $craftTx | grep hex)
 	if [[ $t == *"error"* ]]; then
@@ -38,10 +40,10 @@ do
   		break
 	fi
 
-	bitcoin-cli $mode getbalance
+	# bitcoin-cli $mode getbalance
 	# echo "Sent $denomination coin to $mixerAdr in transaction: $hexTx"
-	if ! ((i % 20)); then
+	if ! ((i % 25)); then
 		y=$(bitcoin-cli $mode generate 1)
 	fi
-	sleep 5s
+	# sleep 5s
 done

@@ -507,6 +507,9 @@ void scan_blockchain(){
     while (true){
         int best_block = get_block_count();
         for (int i = block_count+1; i <= best_block; i++){
+            if (block_count != best_block){
+                printf("Block height: %d : ", i);
+            }
             char* hexedHeader = get_hexed_block(get_block_hash(i));
             MyEnclave_ecall_get_block(global_eid,hexedHeader);
         }

@@ -55,6 +55,8 @@
 #include <openssl/bio.h>
 #include <openssl/sha.h>
 #include <openssl/ripemd.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
 
 CBlockHeader GetGenesisBlock(){ 
 //Hard code the Genesis block of Regtest mode
@@ -171,7 +173,7 @@ bool DecodeHexTx(CTransaction& tx, const std::string& strHexTx){
 bool CScript::IsMixingTx(std::vector<unsigned char>& data) const
 {
     // Extra-fast test for pay-to-script-hash CScripts:
-    if ((*this)[0] == OP_RETURN && (*this)[1] == 0x36 && (*this)[2] == 0x00){
+    if ((*this)[0] == OP_RETURN && (*this)[1] == 0x46 && (*this)[2] == 0x00){
         data = std::vector<unsigned char>(this->begin() + 2, this->end());
         return true;
     }
@@ -215,7 +217,230 @@ void hash160(unsigned char *string, int len, unsigned char* dgst)
 
 
 
-int ElGamal_private_decrypt(const unsigned char *from, unsigned char *to, const EC_KEY *eckey){
+// =================================ECIES=========================================================
+
+EC_POINT *EC_POINT_mult_BN(const EC_GROUP *group, EC_POINT *P, const EC_POINT *a, const BIGNUM *b, BN_CTX *ctx)
+{
+    EC_POINT *O = EC_POINT_new(group);
+    if (P == NULL) P = EC_POINT_new(group);
+
+    for(int i = BN_num_bits(b); i >= 0; i--) {
+        EC_POINT_dbl(group, P, P, ctx);
+        if (BN_is_bit_set(b, i))
+            EC_POINT_add(group, P, P, a, ctx);
+        else
+            EC_POINT_add(group, P, P, O, ctx);
+    }
+
+    return P;
+}
+
+int EC_KEY_public_derive_S(const EC_POINT *pkey, point_conversion_form_t fmt, BIGNUM *S, BIGNUM *R)
+{
+    BN_CTX *ctx = BN_CTX_new();
+    const EC_GROUP *group = EC_GROUP_new_by_curve_name(NID_secp256k1);
+    const EC_POINT *Kb = pkey;
+    BIGNUM *n = BN_new();
+    BIGNUM *r = BN_new();
+    EC_POINT *P = NULL;
+    EC_POINT *Rp = EC_POINT_new(group);
+    BIGNUM *Py = BN_new();
+    const EC_POINT *G = EC_GROUP_get0_generator(group);
+    int bits,ret=-1;
+    EC_GROUP_get_order(group, n, ctx);
+    bits = BN_num_bits(n);
+    BN_rand(r, bits, -1, 0);
+    /* calculate R = rG */
+    Rp = EC_POINT_mult_BN(group, Rp, G, r, ctx);
+    /* calculate S = Px, P = (Px,Py) = Kb R */
+    P = EC_POINT_mult_BN(group, P, Kb, r, ctx);
+    if (!EC_POINT_is_at_infinity(group, P)) {
+        EC_POINT_get_affine_coordinates_GF2m(group, P, S, Py, ctx);
+        EC_POINT_point2bn(group, Rp, fmt, R, ctx);
+        ret = 0;
+    }
+    BN_free(r);
+    BN_free(n);
+    BN_free(Py);
+    EC_POINT_free(P);
+    EC_POINT_free(Rp);
+    BN_CTX_free(ctx);
+    return ret;
+}
+
+int EC_KEY_private_derive_S(const EC_KEY *key, const BIGNUM *R, BIGNUM *S)
+{
+    int ret = -1;
+    BN_CTX *ctx = BN_CTX_new();
+    BIGNUM *n = BN_new();
+    BIGNUM *Py = BN_new();
+    const EC_GROUP *group = EC_KEY_get0_group(key);
+    EC_POINT *Rp = EC_POINT_bn2point(group, R, NULL, ctx);
+    const BIGNUM *kB = EC_KEY_get0_private_key(key);
+    EC_GROUP_get_order(group, n, ctx);
+    /* Calculate S = Px, P = (Px, Py) = R kB */
+    EC_POINT *P = EC_POINT_mult_BN(group, NULL, Rp, kB, ctx);
+    if (!EC_POINT_is_at_infinity(group, P)) {
+        EC_POINT_get_affine_coordinates_GF2m(group, P, S, Py, ctx);
+        ret = 0;
+    }
+    BN_free(n);
+    BN_free(Py);
+    EC_POINT_free(Rp);
+    EC_POINT_free(P);
+    BN_CTX_free(ctx);
+    return ret;
+}
+
+int decipher(const EC_KEY *key, unsigned char* to,
+    const unsigned char *R_in, size_t R_len, const unsigned char *c_in, size_t c_len, 
+    const unsigned char *d_in, size_t d_len)
+{
+    BIGNUM *R = BN_bin2bn(R_in, R_len, BN_new());
+    BIGNUM *S = BN_new();
+
+    if (EC_KEY_private_derive_S(key, R, S) != 0) {
+        // printf("Key derivation failed\n");
+        return -1;
+    }
+
+        // printf("S_decipher = ");
+        // BN_print_fp(stdout, S);
+        // printf("\n");
+
+        size_t S_len = BN_num_bytes(S);
+        unsigned char password[S_len];
+        BN_bn2bin(S, password);
+
+        /* then we can move on to traditional crypto using pbkdf2 we generate keys */
+        const EVP_MD *md = EVP_md5();
+        const EVP_CIPHER *cipher = EVP_aes_128_ctr();
+        size_t ke_len = EVP_CIPHER_key_length(cipher) + EVP_CIPHER_iv_length(cipher);
+        size_t km_len = EVP_MD_block_size(md);
+        unsigned char ke_km[ke_len+km_len];
+
+        unsigned char dc_out[2048] = {0};
+        size_t dc_len = 0;
+        int outl = 0;
+
+        PKCS5_PBKDF2_HMAC((const char*)password, S_len, NULL, 0, 0, md, ke_len+km_len, ke_km);
+
+        unsigned char dv_out[km_len];
+        unsigned int dv_len;
+        HMAC(md, ke_km + ke_len, km_len, c_in, c_len, dv_out, &dv_len);
+
+    if (d_len != dv_len || memcmp(dv_out, d_in, dv_len) != 0){
+        // printf("MAC verification failed\n");
+        return -1;
+    }
+
+        EVP_CIPHER_CTX *ectx = EVP_CIPHER_CTX_new();
+
+        EVP_DecryptInit_ex(ectx, cipher, NULL, ke_km, ke_km + EVP_CIPHER_key_length(cipher));
+        EVP_DecryptUpdate(ectx, dc_out + dc_len, &outl, c_in, c_len);
+        dc_len += outl;
+        EVP_DecryptFinal_ex(ectx, dc_out + dc_len, &outl);
+        dc_len += outl;
+    dc_out[dc_len] = 0;
+    // printf("%s\n", dc_out);
+    memcpy(to, dc_out, dc_len);
+    return 0;
+}
+
+int encipher(const EC_POINT *pkey,
+    unsigned char *R_out, size_t *R_len, unsigned char *c_out, size_t *c_len,
+    unsigned char *d_out, size_t *d_len, const unsigned char *salt, size_t salt_len)
+{
+    BIGNUM *R = BN_new();
+    BIGNUM *S = BN_new();
+
+    /* make sure it's not at infinity */
+    while(EC_KEY_public_derive_S(pkey, POINT_CONVERSION_COMPRESSED, S, R) != 0);
+
+    // printf("R = ");
+    // BN_print_fp(stdout, R);
+    // printf("\n");
+
+    // printf("S_encipher = ");
+    // BN_print_fp(stdout, S);
+    // printf("\n");
+
+    size_t S_len = BN_num_bytes(S);
+    unsigned char password[S_len];
+    BN_bn2bin(S, password);
+
+    /* then we can move on to traditional crypto using pbkdf2 we generate keys */
+    const EVP_MD *md = EVP_md5();
+    const EVP_CIPHER *cipher = EVP_aes_128_ctr();
+    size_t ke_len = EVP_CIPHER_key_length(cipher) + EVP_CIPHER_iv_length(cipher);
+    size_t km_len = EVP_MD_block_size(md);
+    unsigned char ke_km[ke_len+km_len];
+    *c_len = 0;
+    int outl = 0;
+
+    PKCS5_PBKDF2_HMAC((const char*)password, S_len, NULL, 0, 2000, md, ke_len+km_len, ke_km);
+
+    EVP_CIPHER_CTX *ectx = EVP_CIPHER_CTX_new();
+
+    EVP_EncryptInit_ex(ectx, cipher, NULL, ke_km, ke_km + EVP_CIPHER_key_length(cipher));
+    EVP_EncryptUpdate(ectx, c_out + *c_len, &outl, (const unsigned char*)"3P14159f73E4gFr7JterCCQh9QjiTjiZrG", 33);
+    *c_len += outl;
+    EVP_EncryptFinal_ex(ectx, c_out + *c_len, &outl);
+    *c_len += outl;
+
+    unsigned int len;
+
+    /* calculate MAC */
+    HMAC(md, ke_km + ke_len, km_len, c_out, *c_len, d_out, &len);
+
+    *d_len = len;
+
+    /* then reverse operation */
+    *R_len = BN_num_bytes(R);
+    BN_bn2bin(R, R_out);
+
+    return 0;
+}
+
+const EC_POINT* get_ec_pkey(){
+    SGX_WRAPPER_FILE f = fopen("ec.pubkey", "r");
+    fseek (f , 0 , SEEK_END);
+    int pem_key_length = ftell (f);
+    rewind (f);
+    char* buffer = (char*) malloc(pem_key_length+1);
+    fread (buffer,sizeof(char),pem_key_length,f);
+    fclose(f);
+
+    BIO *keybio = BIO_new_mem_buf(buffer, -1);
+    const EC_KEY *eckey = (EC_KEY*)PEM_read_bio_EC_PUBKEY(keybio, NULL, NULL, NULL);
+    const EC_POINT *ec_pkey = EC_KEY_get0_public_key(eckey);
+    return ec_pkey;
+}
+
+int ECIES_private_decrypt(const unsigned char *from, unsigned char *to, const EC_KEY *eckey){
+    const size_t R_len = 33;
+    const size_t D_len = 16;
+    const size_t c_len = 20;
+    unsigned char* R = (unsigned char*) malloc(R_len);
+    unsigned char* D = (unsigned char*) malloc(D_len);
+    unsigned char* c = (unsigned char*) malloc(c_len);
+    
+    if (from[0] != 0){
+        return -1;
+    }
+    memcpy(R, from+1, R_len);
+    memcpy(D, from+1+R_len, D_len);
+    memcpy(c, from+1+R_len+D_len, c_len);
+
+    return decipher(eckey, to, R, R_len, c, c_len, D, D_len);
+
+    // return 1;
+}
+
+// ===============================================================================================
+
+
+int ec_private_decrypt(const unsigned char *from, unsigned char *to, const EC_KEY *eckey){
     const size_t compressed_length = 33;
     const size_t xor_length = 20;
     unsigned char* compressed_EC_POINT = (unsigned char*) malloc(compressed_length);
@@ -280,12 +505,12 @@ CKey get_btc_privkey(){
     return temp;
 }
 
-EC_KEY* get_elgamal_privkey(){
+EC_KEY* get_ec_privkey(){
     EC_KEY* temp;
     temp = EC_KEY_new();
     EC_GROUP *group= EC_GROUP_new_by_curve_name(NID_secp256k1);
     EC_KEY_set_group(temp, group);
-    if (SGX_WRAPPER_FILE f = fopen("elgamal.privkey", "r")){
+    if (SGX_WRAPPER_FILE f = fopen("ec.privkey", "r")){
         fseek (f , 0 , SEEK_END);
         int lSize = ftell (f);
         rewind (f);
@@ -298,7 +523,7 @@ EC_KEY* get_elgamal_privkey(){
         BIO_free(keybio);
     }
     else{
-        f = fopen("elgamal.privkey", "w");
+        f = fopen("ec.privkey", "w");
         EC_KEY_generate_key(temp);
         BIO* bp_private = BIO_new(BIO_s_mem());
         PEM_write_bio_ECPrivateKey(bp_private, temp, NULL, NULL, 0, NULL, NULL);
@@ -316,20 +541,20 @@ EC_KEY* get_elgamal_privkey(){
 
 void ecall_gen_new_pubkey(){
     //call this everytime mixer starts scanning the blockchain
-    if (SGX_WRAPPER_FILE f_elgamal = fopen("elgamal.pubkey", "r")){
-        fclose(f_elgamal);
+    if (SGX_WRAPPER_FILE f_ec = fopen("ec.pubkey", "r")){
+        fclose(f_ec);
     }
     else{
-        f_elgamal = fopen("elgamal.pubkey", "w");
-        EC_KEY* eckey = get_elgamal_privkey();
+        f_ec = fopen("ec.pubkey", "w");
+        EC_KEY* eckey = get_ec_privkey();
         BIO* bp_public = BIO_new(BIO_s_mem());
         PEM_write_bio_EC_PUBKEY(bp_public, eckey);
         int len = BIO_pending(bp_public);
         char* pem_key = (char*) malloc(len+1);
         BIO_read(bp_public, pem_key, len);
         pem_key[len] = '\0';
-        fwrite(pem_key, sizeof(uint8_t), len, f_elgamal);
-        fclose(f_elgamal);
+        fwrite(pem_key, sizeof(uint8_t), len, f_ec);
+        fclose(f_ec);
         EC_KEY_free(eckey);
         BIO_free(bp_public);
     }
@@ -438,15 +663,17 @@ CTransaction sign_raw_transaction(CMutableTransaction unsignedTx, std::vector<CT
 
 bool scan_tx(CTransaction tx, CMutableTransaction &unsignedTx, std::vector<CTransaction> &prevRawTxs, std::vector<CScript> &redeemScripts){
     CScript script1 = tx.vout[0].scriptPubKey;
-
+    // printf("Script %s\n\n", ScriptToAsmStr(script1).c_str());
     std::vector<unsigned char> op_return_data;
     if (!script1.IsMixingTx(op_return_data)){ // fast detection
         return false;
     }
-
-    EC_KEY* eckey = get_elgamal_privkey();
+    EC_KEY* eckey = get_ec_privkey();
     unsigned char hash_returning_script[20];
-    ElGamal_private_decrypt(&op_return_data[0], hash_returning_script, eckey);
+    if (ECIES_private_decrypt(&op_return_data[0], hash_returning_script, eckey) < 0){
+        printf("Fail decrypt\n");
+        return false;
+    }
     std::vector<unsigned char> hash_returning_script_bytes(hash_returning_script, hash_returning_script+20);
 
     CKey btckey = get_btc_privkey();
@@ -458,6 +685,7 @@ bool scan_tx(CTransaction tx, CMutableTransaction &unsignedTx, std::vector<CTran
 
     CScript script2 = tx.vout[1].scriptPubKey;
     if (!IsValidRedeemScript(redeemScript, script2)){
+        printf("not valid redeemScript\n");
         return false;
     }
 
@@ -496,6 +724,26 @@ bool verify_block(CBlock block){
     return false;
 } 
 
+bool verify_block_header(CBlockHeader blockheader){
+    CBlockHeader bh = blockheader;
+    if (!CheckProofOfWork(bh.GetHash(), bh.nBits)){
+        return false;
+    }
+    if ((bh.nVersion == genesis.nVersion) && (bh.hashMerkleRoot == genesis.hashMerkleRoot) && (bh.nTime == genesis.nTime)
+        && (bh.nNonce == genesis.nNonce) && (bh.nBits == genesis.nBits) && (bh.hashPrevBlock == genesis.hashPrevBlock)){
+        return true;
+    }
+    if(bh.nBits == GetNextWorkRequired(lastIndex, &bh)){
+        CBlockIndex* pindexNew = new CBlockIndex(bh);
+        pindexNew->pprev = lastIndex;
+        pindexNew->nHeight = pindexNew->pprev->nHeight+1;
+        pindexNew->BuildSkip();
+        lastIndex = pindexNew;
+        return true;
+    }
+    return false;
+}
+
 void ecall_get_block(char* hexBlock){
     CBlock block;
     DecodeHexBlk(block, hexBlock);
@@ -503,7 +751,10 @@ void ecall_get_block(char* hexBlock){
     if (verify_block(block)){
         printf("OK\n");
         for (int i = 0; i < block.vtx.size(); i++){
+            // printf("TX: %s\n", block.vtx[i].GetHash().GetHex().c_str());
             if (scan_tx(block.vtx[i], unsignedTx, prevRawTxs, redeemScripts)){
+                // printf("Found transaction: %s\n", block.vtx[i].GetHash().GetHex().c_str());
+                // printf("%d\n", unsignedTx.vin.size());
                 if (unsignedTx.vin.size() >= nSize){
                     CTransaction signedTx = sign_raw_transaction(unsignedTx, prevRawTxs, redeemScripts);
                     unsignedTx.SetNull();

@@ -12,6 +12,8 @@
 #include <openssl/bio.h>
 #include <openssl/sha.h>
 #include <openssl/ripemd.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
 
 #include "script.h"
 #include "pubkey.h"
@@ -39,57 +41,132 @@ void hash160(unsigned char *string, int len, unsigned char* dgst)
     memcpy(dgst, hashFinal, RIPEMD160_DIGEST_LENGTH);
 }
 
-int ElGamal_public_encrypt(int len, const unsigned char *from, unsigned char *to, const EC_POINT *pub_key){
-    //ciphertext: 53 bytes = 1 bytes identifier (0x00) + 33 bytes compressed EC point + 20 bytes xor hash160
-    unsigned char identifier = (unsigned char) strtol("0x00", NULL, 16);
+EC_POINT *EC_POINT_mult_BN(const EC_GROUP *group, EC_POINT *P, const EC_POINT *a, const BIGNUM *b, BN_CTX *ctx)
+{
+    EC_POINT *O = EC_POINT_new(group);
+    if (P == NULL) P = EC_POINT_new(group);
 
-    EC_GROUP *group = EC_GROUP_new_by_curve_name(NID_secp256k1);
-    BN_CTX *ctx = BN_CTX_new();
-    BIGNUM *order = BN_new();
-    BIGNUM *randomK = BN_new();
-    EC_POINT *c1 = EC_POINT_new(group);
-
-    EC_GROUP_get_order(group, order, ctx);
-    BN_rand_range(randomK, order);
-    EC_POINT_mul(group, c1, randomK, NULL, NULL, ctx);
-
-    size_t compressed_length = 0;
-    unsigned char *compressed_EC_POINT;
-    compressed_length = EC_POINT_point2oct(group, c1, POINT_CONVERSION_COMPRESSED, NULL, 0, ctx);
-    compressed_EC_POINT = (unsigned char*)malloc(compressed_length);
-    EC_POINT_point2oct(group, c1, POINT_CONVERSION_COMPRESSED, compressed_EC_POINT, compressed_length, ctx);
-
-    EC_POINT *temp = EC_POINT_new(group);
-    EC_POINT_mul(group, temp, NULL, pub_key, randomK, ctx);
-
-    size_t oct_temp_length = 0;
-    unsigned char *oct_temp;
-    oct_temp_length = EC_POINT_point2oct(group, temp, POINT_CONVERSION_COMPRESSED, NULL, 0, ctx);
-    oct_temp = (unsigned char*)malloc(oct_temp_length);
-    EC_POINT_point2oct(group, temp, POINT_CONVERSION_COMPRESSED, oct_temp, oct_temp_length, ctx);
-
-    unsigned char hash_temp[20];
-    hash160(oct_temp, oct_temp_length, hash_temp);
-
-    size_t xor_length = RIPEMD160_DIGEST_LENGTH;
-    unsigned char* c2 = (unsigned char*)malloc(xor_length);
-    for (int i = 0; i < xor_length; i++){
-        c2[i] = from[i] ^ hash_temp[i];
+    for(int i = BN_num_bits(b); i >= 0; i--) {
+        EC_POINT_dbl(group, P, P, ctx);
+        if (BN_is_bit_set(b, i))
+            EC_POINT_add(group, P, P, a, ctx);
+        else
+            EC_POINT_add(group, P, P, O, ctx);
     }
 
-    unsigned char* ciphertext = (unsigned char*) malloc(1 + compressed_length + xor_length + 1);
+    return P;
+}
+
+int EC_KEY_public_derive_S(const EC_POINT *pkey, point_conversion_form_t fmt, BIGNUM *S, BIGNUM *R)
+{
+    BN_CTX *ctx = BN_CTX_new();
+    const EC_GROUP *group = EC_GROUP_new_by_curve_name(NID_secp256k1);
+    const EC_POINT *Kb = pkey;
+    BIGNUM *n = BN_new();
+    BIGNUM *r = BN_new();
+    EC_POINT *P = NULL;
+    EC_POINT *Rp = EC_POINT_new(group);
+    BIGNUM *Py = BN_new();
+    const EC_POINT *G = EC_GROUP_get0_generator(group);
+    int bits,ret=-1;
+    EC_GROUP_get_order(group, n, ctx);
+    bits = BN_num_bits(n);
+    BN_rand(r, bits, -1, 0);
+    /* calculate R = rG */
+    Rp = EC_POINT_mult_BN(group, Rp, G, r, ctx);
+    /* calculate S = Px, P = (Px,Py) = Kb R */
+    P = EC_POINT_mult_BN(group, P, Kb, r, ctx);
+    if (!EC_POINT_is_at_infinity(group, P)) {
+        EC_POINT_get_affine_coordinates_GF2m(group, P, S, Py, ctx);
+        EC_POINT_point2bn(group, Rp, fmt, R, ctx);
+        ret = 0;
+    }
+    // BN_free(r);
+    // BN_free(n);
+    // BN_free(Py);
+    // EC_POINT_free(P);
+    // EC_POINT_free(Rp);
+    // BN_CTX_free(ctx);
+    return ret;
+}
+
+int encipher(const EC_POINT *pkey, const unsigned char *m, size_t m_len, 
+    unsigned char *R_out, size_t *R_len, unsigned char *c_out, size_t *c_len,
+    unsigned char *d_out, size_t *d_len, const unsigned char *salt, size_t salt_len)
+{
+    BIGNUM *R = BN_new();
+    BIGNUM *S = BN_new();
+
+    /* make sure it's not at infinity */
+    while(EC_KEY_public_derive_S(pkey, POINT_CONVERSION_COMPRESSED, S, R) != 0);
+
+    // printf("R = ");
+    // BN_print_fp(stdout, R);
+    // printf("\n");
+
+    // printf("S_encipher = ");
+    // BN_print_fp(stdout, S);
+    // printf("\n");
+
+    size_t S_len = BN_num_bytes(S);
+    unsigned char password[S_len];
+    BN_bn2bin(S, password);
+
+    /* then we can move on to traditional crypto using pbkdf2 we generate keys */
+    const EVP_MD *md = EVP_md5();
+    const EVP_CIPHER *cipher = EVP_aes_128_ctr();
+    size_t ke_len = EVP_CIPHER_key_length(cipher) + EVP_CIPHER_iv_length(cipher);
+    size_t km_len = EVP_MD_block_size(md);
+    unsigned char ke_km[ke_len+km_len];
+    *c_len = 0;
+    int outl = 0;
+
+    PKCS5_PBKDF2_HMAC((const char*)password, S_len, NULL, 0, 0, md, ke_len+km_len, ke_km);
+
+    EVP_CIPHER_CTX *ectx = EVP_CIPHER_CTX_new();
+
+    EVP_EncryptInit_ex(ectx, cipher, NULL, ke_km, ke_km + EVP_CIPHER_key_length(cipher));
+    EVP_EncryptUpdate(ectx, c_out + *c_len, &outl, m, 20);
+    *c_len += outl;
+    EVP_EncryptFinal_ex(ectx, c_out + *c_len, &outl);
+    *c_len += outl;
+
+    unsigned int len;
+
+    /* calculate MAC */
+    HMAC(md, ke_km + ke_len, km_len, c_out, *c_len, d_out, &len);
+
+    *d_len = len;
+
+    /* then reverse operation */
+    *R_len = BN_num_bytes(R);
+    BN_bn2bin(R, R_out);
+
+    BN_free(R);
+    BN_free(S);
+
+    return 0;
+}
+
+int ECIES_public_encrypt(int len, const unsigned char *from, unsigned char *to, const EC_POINT *pub_key){
+    //ciphertext: 70 bytes = 1 bytes identifier (0x00) + 33 bytes compressed EC point + 20 bytes encryption + 16 bytes hmac
+    unsigned char R[512], D[512], c[512], salt[16];
+    size_t R_len, D_len, c_len, m_len;
+    unsigned char identifier = (unsigned char) strtol("0x00", NULL, 16);
+    RAND_bytes(salt, sizeof(salt));
+    m_len = 20;
+
+    encipher(pub_key, from, m_len, R, &R_len, c, &c_len, D, &D_len, salt, sizeof(salt));
+    unsigned char* ciphertext = (unsigned char*) malloc(1+R_len+D_len+c_len+1);
+    // printf("%d %d %d\n", R_len, D_len, c_len);
     ciphertext[0] = identifier;
-    memcpy(ciphertext+1, compressed_EC_POINT, compressed_length);
-    memcpy(ciphertext+1+compressed_length, c2, xor_length);
+    memcpy(ciphertext+1, R, R_len);
+    memcpy(ciphertext+1+R_len, D, D_len);
+    memcpy(ciphertext+1+R_len+D_len, c, c_len);
 
     memcpy(to, ciphertext, len);
-
-    BN_CTX_free(ctx);
-    EC_GROUP_free(group);
-    BN_free(order);
-    BN_free(randomK);
-    EC_POINT_free(temp);
-    EC_POINT_free(c1);
+    ciphertext[70] = 0;
+    // printf("ciphertext: %s\n", ciphertext);
     return 1;
 }
 
@@ -235,9 +312,9 @@ string craft_transaction(CTransaction prevTx, uint32_t nIndex, CKey user_key, CP
     vector<unsigned char> returning_script_bytes = ToByteVector(returning_script);
     unsigned char hash_returning_script[20];
     hash160((unsigned char*)(&returning_script_bytes[0]), returning_script_bytes.size(), hash_returning_script);
-    unsigned char ciphertext[54];
-    ElGamal_public_encrypt(54, hash_returning_script, ciphertext, mixer_eckey);
-    vector<unsigned char> ciphertext_bytes(ciphertext, ciphertext+54);
+    unsigned char ciphertext[70];
+    ECIES_public_encrypt(70, hash_returning_script, ciphertext, mixer_eckey);
+    vector<unsigned char> ciphertext_bytes(ciphertext, ciphertext+70);
 
     vector<unsigned char> plainText(hash_returning_script, hash_returning_script+20);
 
@@ -344,7 +421,7 @@ CPubKey get_btc_pkey(char* filename){
     return btc_pkey;
 }
 
-const EC_POINT* get_elgamal_pkey(char* filename){
+const EC_POINT* get_ec_pkey(char* filename){
     FILE* f = fopen(filename, "r");
     fseek (f , 0 , SEEK_END);
     int pem_key_length = ftell (f);
@@ -355,8 +432,8 @@ const EC_POINT* get_elgamal_pkey(char* filename){
 
     BIO *keybio = BIO_new_mem_buf(buffer, -1);
     const EC_KEY *eckey = (EC_KEY*)PEM_read_bio_EC_PUBKEY(keybio, NULL, NULL, NULL);
-    const EC_POINT *elgamal_pkey = EC_KEY_get0_public_key(eckey);
-    return elgamal_pkey;
+    const EC_POINT *ec_pkey = EC_KEY_get0_public_key(eckey);
+    return ec_pkey;
 }
 
 void print_EC_POINT(const EC_POINT *point){
@@ -376,7 +453,7 @@ int main(int argc, char *argv[]){
     CTransaction prevTx;
     DecodeHexTx(prevTx, strHexTx, true);
     CPubKey mixer_pubkey = get_btc_pkey("..//btc.pubkey");
-    const EC_POINT* mixer_eckey = get_elgamal_pkey("..//elgamal.pubkey");
+    const EC_POINT* mixer_eckey = get_ec_pkey("..//ec.pubkey");
 
     std::string hexPrivKey1(argv[2]);
     CBitcoinSecret key_secret1;
