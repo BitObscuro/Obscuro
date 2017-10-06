@@ -2,12 +2,13 @@
 
 ## Description
 
-The implementation of Obscuro, as proposed in [Obscuro: A Secure and Anonymous Bitcoin Mixer using SGX](TBD).  
+The implementation of Obscuro, as proposed in [Obscuro: A Bitcoin Mixer using Trusted Execution Environments](https://eprint.iacr.org/2017/974.pdf).  
+
+Obscuro is used to mix 1000 users (in [a non-standard transaction](https://www.blocktrail.com/tBTC/tx/f5230965145ef06eb65595e41ecb701af6c128802a174f34a7b65ac7d44dc9b8)) and 430 users (in [a standard transaction](https://www.blocktrail.com/tBTC/tx/59e1f4ffe3e6b735f279f340a088597af45f545e6bab4542c82a24d0014b59b9)).
 
 In this demonstration, we set up Obscuro in the Intel SGX Simulation mode so
 that any machine meets the prerequisites can run it. Due to the liquidity
 problem, this proof-of-concept implementation is run in Bitcoin Regtest mode.
-
 
 ## Prerequisites
 Following is the software configuration required for Intel SGX SDK and Obscuro.
@@ -82,13 +83,13 @@ make
 ```
 make clean
 ```
-- To clear ElGamal and ECDSA private keys of Obscuro
+- To clear EC and ECDSA private keys of Obscuro
 ```
 make clear
 
 ```
 - Bootstrap (load blocks up to current best block, generate new keys) and scan for deposit transaction in the next blocks.
-Setup the size of the mixing transaction in \MyEnclave\MyEnclave.cpp, set nSize to some number.
+Setup the size of the mixing transactions in \MyEnclave\MyEnclave.cpp, set nSize = 10.
 ```
 ./app scan
 ```
@@ -99,11 +100,12 @@ Setup the size of the mixing transaction in \MyEnclave\MyEnclave.cpp, set nSize 
 cd User
 make
 ```
-- Run genTx.sh to generate the transactions for mixing. Set the number of the transaction in genTx.sh.
+- Run genTx.sh to generate the transactions for mixing. Set the number of the transactions in genTx.sh to 10.
 User application takes a hexed string of previous transaction (funding for deposit transaction), key to spend the previous transaction,
 and the key for the returing address.
 ```
 ./genTx.sh
+bitcoin-cli -regtest generate 1
 ```
 
 
