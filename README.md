@@ -102,7 +102,7 @@ We do not guarantee its compatibility with more recent versions.
 	* Build and install Bitcoin Client:
 		```
 		cd ~/bitcoin-0.13.1
-		./autogen.sg
+		./autogen.sh
 		./configure
 		make
 		sudo make install
@@ -112,7 +112,7 @@ We do not guarantee its compatibility with more recent versions.
 * Build Obscuro:
 	```
 	cd ~/Obscuro/src
-	sudo cp sgx-status.h /opt/intel/sgxsdk/include/sgx_status.h
+	sudo cp sgx_status.h /opt/intel/sgxsdk/include/sgx_status.h
 	make
 	```
 	* To clean dependencies of previous make: ```make clean```
