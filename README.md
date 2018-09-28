@@ -1,114 +1,191 @@
+
 # Obscuro
 
 ## Description
 
-The implementation of Obscuro, as proposed in [Obscuro: A Bitcoin Mixer using Trusted Execution Environments](https://eprint.iacr.org/2017/974.pdf).  
+The implementation of Obscuro, as proposed in [Obscuro: A Bitcoin Mixer using Trusted Execution Environments](https://www.comp.nus.edu.sg/~muoitran/papers/obscuro.pdf).  
 
 Obscuro is used to mix 1000 users (in [a non-standard transaction](https://www.blocktrail.com/tBTC/tx/f5230965145ef06eb65595e41ecb701af6c128802a174f34a7b65ac7d44dc9b8)) and 430 users (in [a standard transaction](https://www.blocktrail.com/tBTC/tx/59e1f4ffe3e6b735f279f340a088597af45f545e6bab4542c82a24d0014b59b9)).
 
-In this demonstration, we set up Obscuro in the Intel SGX Simulation mode so
-that any machine meets the prerequisites can run it. Due to the liquidity
-problem, this proof-of-concept implementation is run in Bitcoin Regtest mode.
+## Before we begin
 
-## Prerequisites
-Following is the software configuration required for Intel SGX SDK and Obscuro.
-* [Ubuntu* Desktop-14.04-LTS 64bits](http://old-releases.ubuntu.com/releases/trusty/ubuntu-14.04.1-desktop-amd64.iso)
-* Note that this demonstration has been tested to work on [Linux Kernel v3.13.0-106-generic](http://packages.ubuntu.com/trusty/kernel/linux-image-3.13.0-106-generic)
+* We highly recommend using VirtualBox for this demonstration.
 
+* This guide is for you to build the project from scratch and have better understanding about the dependencies. 
+Alternatively, you can request for a OVA file with everything is ready for ussage. 
 
-## Install
-### Install Intel SGX SDK
-Download Intel(R) Software Guard Extensions for Linux* OS
-* [Version 1.6](https://github.com/01org/linux-sgx/tree/sgx_1.6)
+* Obscuro can run in both Hardware mode (when the platform has SGX enabled) and Simulation mode (any machine can run). 
+This demo will be running in Simulation mode. If you want to run with Hardware mode, see Notes below. 
 
-Build and install Intel(R) SGX SDK
-- Use the following command to install the required tools to build Intel(R) SGX SDK:  
-```
-sudo apt-get install build-essential ocaml automake autoconf libtool
-```
-- Use the script `download_prebuilt.sh` inside source code package to download prebuilt binaries to prebuilt folder
-```
-./download_prebuilt.sh
-```
-- Build Intel SGX SDK 
-```
-make
-```
-- To build Intel(R) SGX SDK installer, enter the following command
-```
-make sdk_install_pkg
-```
-You can find the generated Intel SGX SDK installer `sgx_linux_x64_sdk_${version}.bin` located under `linux/installer/bin/`, where `${version}` refers to the version number.
-- To install Intel(R) SGX SDK, enter the following commands and install SGX SDK to /opt/intel
-```
-cd linux/installer/bin
-./sgx_linux_x64_sdk_${version}.bin 
-```
-- Compile and run each sample codes in the simulation mode to make sure the package works well.  
-```
-  $ cd SampleCode/LocalAttestation
-  $ make SGX_MODE=SIM
-  $ ./app
-```
-### Install Bitcoin Client
-* [Bitcoin Core version 0.13.1](https://github.com/bitcoin/bitcoin/archive/v0.13.1.tar.gz).
+* Obscuro can run in Bitcoin Regtest/Testnet/Mainnet environment.
+This demo will be running in Regtest mode due to the liquidity constraint. 
 
-### Some notes 
-- To run Obscuro in  Hardware mode on an SGX-enable machine: Modify SGX_MODE ?= HW in Makefile and rename vrfcert.sign.so.hw to vrfcert.sign.so (the old vrfcert.sign.so should be renamed to vrfcert.sign.so.sim).
-- If get compile time error about “sgx-status.h”, copy the file from src/ to /opt/intel/sgxsdk/include/sgx_status.h
-- If get error when run ./app after rebooting: "./app: error while loading shared libraries: libsgx_urts_sim.so: cannot open shared object file: No such file or directory", uninstall SGX SDK from /opt/intel and reinstall it
+* Obscuro is tested with [Ubuntu* Desktop-16.04-LTS 64bits](http://releases.ubuntu.com/16.04.5/ubuntu-16.04.5-desktop-amd64.iso) and [kernel linux-image-4.15.0-29-generic](https://packages.ubuntu.com/bionic-updates/linux-image-4.15.0-29-generic). We do not guarantee its compatibility with any other version of OS and kernel, unfortunately. 
 
-## Running the demo
+* Similarly, Obscuro works well with [Intel SGX SDK for Linux version 1.8](https://github.com/intel/linux-sgx/tree/sgx_1.8). 
+We do not guarantee its compatibility with more recent versions. 
 
-- Start Bitcoin Regtest server
+## Installation
 
-```
-bitcoind -regtest -daemon
+**Important note: We assume all the downloads in this section are stored in the $HOME folder.**
 
-bitcoin-cli -regtest generate 101
-```
-- Verify that we now have 50 bitcoins available to spend
-```
-bitcoin-cli -regtest getbalance
-50.00000000
-```
+### Intel SGX Driver
+* Download SGX 1.5 Linux Driver (master) : https://github.com/intel/linux-sgx-driver
+* Check and install matching header (optional):
+	 ````
+	cd ~/linux-sgx-driver
+	dpkg-query -s linux-headers-$(uname -r)
+	sudo apt-get install linux-headers-$(uname -r)
+	````
+* Build the Intel(R) SGX Driver
+	````
+	sudo mkdir -p "/lib/modules/"`uname -r`"/kernel/drivers/intel/sgx"    
+	sudo cp isgx.ko "/lib/modules/"`uname -r`"/kernel/drivers/intel/sgx"    
+	sudo sh -c "cat /etc/modules | grep -Fxq isgx || echo isgx >> /etc/modules"    
+	sudo /sbin/depmod
+	sudo /sbin/modprobe isgx
+	````
+	
+### Intel SGX SDK
+* Download Intel(R) Software Guard Extensions for Linux* OS:
+	* [Version 1.8](https://github.com/intel/linux-sgx/tree/sgx_1.8)
+* Use the following command(s) to install the required tools to build Intel(R) SGX SDK:
+	```
+	sudo apt-get install build-essential ocaml automake autoconf libtool wget python
+	```
+* Use the following command to install additional required tools to build Intel(R) SGX PSW:
+	````
+	 sudo apt-get install libssl-dev libcurl4-openssl-dev protobuf-compiler libprotobuf-dev
+	````
+	* PSW is needed for running Obscuro in Hardware mode, see [Intel Website](https://github.com/intel/linux-sgx/tree/sgx_1.8) for details.
+*  Download prebuilt binaries:
+	```
+	cd ~/linux-sgx	
+	./download_prebuilt.sh
+	```
+* Build the Intel(R) SGX SDK
+	```
+	make
+	```
+* Build the Intel(R) SGX SDK Installer
+	 ```
+	make sdk_install_pkg
+	```
+*  Install Intel(R) SGX SDK
+	````
+	sudo apt-get install build-essential python
+	cd linux/installer/bin
+	sudo ./sgx_linux_x64_sdk_${version}.bin 
+	````
+	* Note: when promted by the installer, hit _No_, and enter the installation location at: _/opt/intel/_
+* Test Intel(R) SGX SDK Package with the Sample Codes at your workplace, such as:
+	```
+	cp -r /opt/intel/sgxsdk/SampleCode ~
+	cd ~/SampleCode/LocalAttestation
+  make SGX_MODE=SIM
+  source /opt/intel/sgxsdk/environment
+  ./app
+	```
+	* The sample code should not return any error and end up with "Hit a key..."
 
-- Build Obscuro
+### Bitcoin Client
+* Download [Bitcoin Core version 0.13.1](https://github.com/bitcoin/bitcoin/archive/v0.13.1.tar.gz) and extract it.
+* Follow the installation guide at _bitcoin-0.13.1/doc/build-unix.md_
+	* Install dependencies:
+		```
+		sudo apt-get install build-essential libtool autotools-dev automake pkg-config libssl-dev libevent-dev bsdmainutils
+		sudo apt-get install libboost-system-dev libboost-filesystem-dev libboost-chrono-dev libboost-program-options-dev libboost-test-dev libboost-thread-dev
+		sudo add-apt-repository ppa:bitcoin/bitcoin
+	    sudo apt-get update
+	    sudo apt-get install libdb4.8-dev libdb4.8++-dev
+		```
+	* Build and install Bitcoin Client:
+		```
+		cd ~/bitcoin-0.13.1
+		./autogen.sg
+		./configure
+		make
+		sudo make install
+		```
+### Build Obscuro 
+* Download Obscuro: https://github.com/BitObscuro/Obscuro
+* Build Obscuro:
+	```
+	cd ~/Obscuro/src
+	sudo cp sgx-status.h /opt/intel/sgxsdk/include/sgx_status.h
+	make
+	```
+	* To clean dependencies of previous make: ```make clean```
+	* To clean crypto keys: ```make clear```
+* Build User client:
+	* Download and install the secpk256k1 library: https://github.com/bitcoin-core/secp256k1
+		```
+		cd ~/secp256k1
+		./autogen.sh
+		./configure
+		make
+		./tests
+		sudo make install
+		```
+	* Make sure the library is installed in _/usr/local/lib_
+	* Build User application:
+		```
+		cd ~/Obscuro/src/User
+		make
+		```
 
-```
-cd src
-make
-```
-- To clean dependencies of previous make
-```
-make clean
-```
-- To clear EC and ECDSA private keys of Obscuro
-```
-make clear
+## Demonstration
+### Demonstration Methodology
+We run Obscuro to scan the recent blocks for deposit transaction. When Obscuro receives 10 deposit transactions, it will start mixing and output a mixed transaction. 
 
-```
-- Bootstrap (load blocks up to current best block, generate new keys) and scan for deposit transaction in the next blocks.
-Setup the size of the mixing transactions in \MyEnclave\MyEnclave.cpp, set nSize = 10.
-```
-./app scan
-```
+The User client includes several scripts that basically send 10 deposit transactions with encrypted returning addresses embedded in them to Obscuro. 
 
-- To craft the deposit transaction of the user side
+### Starting Obscuro scanning
+* Start Bitcoin Regtest server:
+	```
+	bitcoind -regtest -daemon
+	```
+* Generate and verify that we have 50 bitcoins available to spend:
+	```
+	bitcoind -regtest -daemon	# start regtest daemon
+	bitcoin-cli -regtest generate 101	#bootstrap blockchain
+	bitcoin-cli -regtest getbalance
+	```
+* Bootstrap Obscuro's scanning:
+	```
+	cd ~/Obscuro/src
+	source /opt/intel/sgxsdk/environment 	# optional
+	./app scan
+	```
+	* Obscuro will keep scanning until _Ctrl+C_ is hit
+### Sending deposit transactions
+*  Open another terminal tab:
+	```
+	cd ~/Obscuro/src/User
+	./genTx.sh		# Generate and send 10 deposit transactions
+	bitcoin-cli -regtest generate 1		# Mine a block that include the deposit transaction
+	```
+### Checking results
+* In the Obscuro scanning tab, you should be able to receive a mixed transaction in hex format. 
+* Verify the mixing operation:
+```bitcoin-cli -regtest decoderawtransaction <hex_mixed_transaction>```
 
-```
-cd User
-make
-```
-- Run genTx.sh to generate the transactions for mixing. Set the number of the transactions in genTx.sh to 10.
-User application takes a hexed string of previous transaction (funding for deposit transaction), key to spend the previous transaction,
-and the key for the returing address.
-```
-./genTx.sh
-bitcoin-cli -regtest generate 1
-```
+## What's next?
 
+### Running Obscuro in Hardware mode
+* Ensure that you have the following required hardware:
+    * 6th Generation Intel(R) Core(TM) Processor or newer
+    * Configure the system with the  **SGX hardware enabled**  option.
+    * The list of supporting hardware is available here: https://github.com/ayeks/SGX-hardware
+* Modify SGX_MODE ?= HW in Makefile and rename vrfcert.sign.so.hw to vrfcert.sign.so (the old vrfcert.sign.so should be renamed to vrfcert.sign.so.sim).
 
+### Guides
+* List of Bitcoin RPC APIs, parameters, and many other information are available here: https://bitcoin.org/en/developer-reference
+* Intel SGX developer zone: https://software.intel.com/en-us/sgx-sdk
+
+### Future works
+* Test Obscuro with more recent version of Ubuntu (e.g., v18.04) and SGX SDK (e.g., v2.3).
+* Create a docker for Obscuro for better re-production.
 
 ## Contacts
 * **Muoi Tran** - *Project maintainer* - [Email](mailto:muoitran@comp.nus.edu.sg)
@@ -119,5 +196,5 @@ This project is licensed under the [MIT License](http://www.opensource.org/licen
 
 ## Acknowledgments
 
-* Special thanks to [Panoply team](https://shwetasshinde24.github.io/Panoply/) who let us use their code base and give us several comments during the deployment.
+* Special thanks to [Panoply team](https://shwetasshinde24.github.io/Panoply/) for letting us use their code base and for several useful comments during the deployment.
 
