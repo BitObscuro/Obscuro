@@ -31,6 +31,9 @@ We do not guarantee its compatibility with more recent versions.
 
 ### Intel SGX Driver
 * Download SGX 1.5 Linux Driver (master) : https://github.com/intel/linux-sgx-driver
+	````
+	git clone https://github.com/intel/linux-sgx-driver.git
+	````
 * Check and install matching header (optional):
 	 ````
 	cd ~/linux-sgx-driver
@@ -39,6 +42,7 @@ We do not guarantee its compatibility with more recent versions.
 	````
 * Build the Intel(R) SGX Driver
 	````
+	make
 	sudo mkdir -p "/lib/modules/"`uname -r`"/kernel/drivers/intel/sgx"    
 	sudo cp isgx.ko "/lib/modules/"`uname -r`"/kernel/drivers/intel/sgx"    
 	sudo sh -c "cat /etc/modules | grep -Fxq isgx || echo isgx >> /etc/modules"    
@@ -49,6 +53,11 @@ We do not guarantee its compatibility with more recent versions.
 ### Intel SGX SDK
 * Download Intel(R) Software Guard Extensions for Linux* OS:
 	* [Version 1.8](https://github.com/intel/linux-sgx/tree/sgx_1.8)
+	````
+	git clone https://github.com/intel/linux-sgx.git
+	cd ~/linux-sgx
+	git checkout tags/sgx_1.8
+	````
 * Use the following command(s) to install the required tools to build Intel(R) SGX SDK:
 	```
 	sudo apt-get install build-essential ocaml automake autoconf libtool wget python
@@ -59,8 +68,7 @@ We do not guarantee its compatibility with more recent versions.
 	````
 	* PSW is needed for running Obscuro in Hardware mode, see [Intel Website](https://github.com/intel/linux-sgx/tree/sgx_1.8) for details.
 *  Download prebuilt binaries:
-	```
-	cd ~/linux-sgx	
+	```	
 	./download_prebuilt.sh
 	```
 * Build the Intel(R) SGX SDK
@@ -82,9 +90,9 @@ We do not guarantee its compatibility with more recent versions.
 	```
 	cp -r /opt/intel/sgxsdk/SampleCode ~
 	cd ~/SampleCode/LocalAttestation
-  make SGX_MODE=SIM
-  source /opt/intel/sgxsdk/environment
-  ./app
+	make SGX_MODE=SIM
+	source /opt/intel/sgxsdk/environment
+	./app
 	```
 	* The sample code should not return any error and end up with "Hit a key..."
 
@@ -109,6 +117,9 @@ We do not guarantee its compatibility with more recent versions.
 		```
 ### Build Obscuro 
 * Download Obscuro: https://github.com/BitObscuro/Obscuro
+	```
+	git clone https://github.com/BitObscuro/Obscuro.git
+	```
 * Build Obscuro:
 	```
 	cd ~/Obscuro/src
@@ -120,11 +131,12 @@ We do not guarantee its compatibility with more recent versions.
 * Build User client:
 	* Download and install the secpk256k1 library: https://github.com/bitcoin-core/secp256k1
 		```
+		git clone https://github.com/bitcoin-core/secp256k1.git
 		cd ~/secp256k1
 		./autogen.sh
 		./configure
 		make
-		./tests
+		./tests #optional
 		sudo make install
 		```
 	* Make sure the library is installed in _/usr/local/lib_
@@ -143,11 +155,10 @@ The User client includes several scripts that basically send 10 deposit transact
 ### Starting Obscuro scanning
 * Start Bitcoin Regtest server:
 	```
-	bitcoind -regtest -daemon
+	bitcoind -regtest -daemon	# start regtest daemon
 	```
 * Generate and verify that we have 50 bitcoins available to spend:
 	```
-	bitcoind -regtest -daemon	# start regtest daemon
 	bitcoin-cli -regtest generate 101	#bootstrap blockchain
 	bitcoin-cli -regtest getbalance
 	```
