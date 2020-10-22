@@ -5,14 +5,14 @@
 
 The implementation of Obscuro, as proposed in [Obscuro: A Bitcoin Mixer using Trusted Execution Environments](https://www.comp.nus.edu.sg/~muoitran/papers/obscuro.pdf).  
 
-Obscuro is used to mix 1000 users (in [a non-standard transaction](https://www.blocktrail.com/tBTC/tx/f5230965145ef06eb65595e41ecb701af6c128802a174f34a7b65ac7d44dc9b8)) and 430 users (in [a standard transaction](https://www.blocktrail.com/tBTC/tx/59e1f4ffe3e6b735f279f340a088597af45f545e6bab4542c82a24d0014b59b9)).
+Obscuro is used to mix 1000 users (in [a non-standard transaction](https://live.blockcypher.com/btc-testnet/tx/f5230965145ef06eb65595e41ecb701af6c128802a174f34a7b65ac7d44dc9b8/)) and 430 users (in [a standard transaction](https://live.blockcypher.com/btc-testnet/tx/59e1f4ffe3e6b735f279f340a088597af45f545e6bab4542c82a24d0014b59b9/)).
 
 ## Before we begin
 
 * We highly recommend using VirtualBox for this demonstration.
 
 * This guide is for you to build the project from scratch and have better understanding about the dependencies. 
-Alternatively, you can request for a OVA file with everything is ready for ussage. 
+Alternatively, you can use an OVA file with everything is ready for ussage, see our [Release](https://github.com/BitObscuro/Obscuro/releases/tag/v0.1.2)  
 
 * Obscuro can run in both Hardware mode (when the platform has SGX enabled) and Simulation mode (any machine can run). 
 This demo will be running in Simulation mode. If you want to run with Hardware mode, see Notes below. 
@@ -20,7 +20,7 @@ This demo will be running in Simulation mode. If you want to run with Hardware m
 * Obscuro can run in Bitcoin Regtest/Testnet/Mainnet environment.
 This demo will be running in Regtest mode due to the liquidity constraint. 
 
-* Obscuro is tested with [Ubuntu* Desktop-16.04-LTS 64bits](http://releases.ubuntu.com/16.04.5/ubuntu-16.04.5-desktop-amd64.iso) and [kernel linux-image-4.15.0-29-generic](https://packages.ubuntu.com/bionic-updates/linux-image-4.15.0-29-generic). We do not guarantee its compatibility with any other version of OS and kernel, unfortunately. 
+* Obscuro is tested with [Ubuntu* Desktop-16.04-LTS 64bits](http://releases.ubuntu.com/16.04.5/ubuntu-16.04.5-desktop-amd64.iso) and [Ubuntu* 16.04.3 LTS Server 64bits](http://old-releases.ubuntu.com/releases/16.04.3/ubuntu-16.04.3-server-amd64.iso) with their default kernels. We do not guarantee its compatibility with any other version of OS and kernel, unfortunately. 
 
 * Similarly, Obscuro works well with [Intel SGX SDK for Linux version 1.8](https://github.com/intel/linux-sgx/tree/sgx_1.8). 
 We do not guarantee its compatibility with more recent versions. 
@@ -97,24 +97,11 @@ We do not guarantee its compatibility with more recent versions.
 	* The sample code should not return any error and end up with "Hit a key..."
 
 ### Bitcoin Client
-* Download [Bitcoin Core version 0.13.1](https://github.com/bitcoin/bitcoin/archive/v0.13.1.tar.gz) and extract it.
-* Follow the installation guide at _bitcoin-0.13.1/doc/build-unix.md_
-	* Install dependencies:
-		```
-		sudo apt-get install build-essential libtool autotools-dev automake pkg-config libssl-dev libevent-dev bsdmainutils
-		sudo apt-get install libboost-system-dev libboost-filesystem-dev libboost-chrono-dev libboost-program-options-dev libboost-test-dev libboost-thread-dev
-		sudo add-apt-repository ppa:bitcoin/bitcoin
-	    sudo apt-get update
-	    sudo apt-get install libdb4.8-dev libdb4.8++-dev
-		```
-	* Build and install Bitcoin Client:
-		```
-		cd ~/bitcoin-0.13.1
-		./autogen.sh
-		./configure
-		make
-		sudo make install
-		```
+* Download [Bitcoin Core version 0.13.1](https://bitcoincore.org/bin/bitcoin-core-0.13.1/bitcoin-0.13.1-x86_64-linux-gnu.tar.gz) and extract it.
+* Copy the binaries:
+	```
+	sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-0.13.1/bin/*
+	```
 ### Build Obscuro 
 * Download Obscuro: https://github.com/BitObscuro/Obscuro
 	```
@@ -194,9 +181,6 @@ The User client includes several scripts that basically send 10 deposit transact
 * List of Bitcoin RPC APIs, parameters, and many other information are available here: https://bitcoin.org/en/developer-reference
 * Intel SGX developer zone: https://software.intel.com/en-us/sgx-sdk
 
-### Future works
-* Test Obscuro with more recent version of Ubuntu (e.g., v18.04) and SGX SDK (e.g., v2.3).
-* Create a docker for Obscuro for better re-production.
 
 ## Contacts
 * **Muoi Tran** - *Project maintainer* - [Email](mailto:muoitran@comp.nus.edu.sg)
