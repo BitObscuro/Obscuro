@@ -12,7 +12,7 @@ Obscuro is used to mix 1000 users (in [a non-standard transaction](https://live.
 * We highly recommend using VirtualBox for this demonstration.
 
 * This guide is for you to build the project from scratch and have better understanding about the dependencies. 
-Alternatively, you can use an OVA file with everything is ready for ussage, see our [Release](https://github.com/BitObscuro/Obscuro/releases/tag/v0.1.2)  
+Alternatively, you can use an OVA file with everything is ready for ussage, see our [Release](https://github.com/BitObscuro/Obscuro/releases/tag/v0.1.2). 
 
 * Obscuro can run in both Hardware mode (when the platform has SGX enabled) and Simulation mode (any machine can run). 
 This demo will be running in Simulation mode. If you want to run with Hardware mode, see Notes below. 
